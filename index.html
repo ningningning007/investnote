@@ -1681,45 +1681,91 @@ function toggleAIExpand(btn) {
   btn.innerHTML = isOpen ? '&#9660; Show full analysis' : '&#9650; Show less';
 }
 
+async function fetchMarketContext() {
+  try {
+    const resp = await fetch('/api/market');
+    if (!resp.ok) return null;
+    return await resp.json();
+  } catch(e) { return null; }
+}
+
 async function generatePortAI(portId) {
   const port = state.portfolios.find(p => p.id === portId);
   if (!port) return;
   const btn = document.getElementById('btn-ai-'+portId);
   const body = document.getElementById('ai-body-'+portId);
   if (btn) { btn.disabled = true; btn.textContent = '↻ …'; }
-  if (body) body.innerHTML = '<div class="ai-loading"><div class="ai-loading-dots"><span></span><span></span><span></span></div> Analysing portfolio…</div>';
+  if (body) body.innerHTML = '<div class="ai-loading"><div class="ai-loading-dots"><span></span><span></span><span></span></div> Fetching market data…</div>';
+
+  // Fetch live market context in parallel with building portfolio context
+  const marketPromise = fetchMarketContext();
 
   const targets = port.targets || [];
   const totalInvested = targets.reduce((s,t) => s+(t.amount||0),0);
 
-  let context = `Portfolio: ${port.name}\n`;
-  context += `Objective: ${port.objective||'Not specified'}\n`;
-  context += `Target: ${port.currency} ${port.target||0} | Expected return: ${port.returnPct||0}%\n`;
-  context += `Review: ${port.frequency}\nRules: ${port.rules||'None'}\n\n`;
-  context += `Holdings:\n`;
+  // ── Portfolio context ──
+  let context = 'PORTFOLIO DATA\n';
+  context += 'Name: ' + port.name + '\n';
+  context += 'Objective: ' + (port.objective||'Not specified') + '\n';
+  context += 'Target size: ' + port.currency + ' ' + (port.target||0) + ' | Expected return: ' + (port.returnPct||0) + '%\n';
+  context += 'Review frequency: ' + (port.frequency||'Monthly') + '\nRules: ' + (port.rules||'None') + '\n\n';
+  context += 'Holdings:\n';
   targets.forEach(t => {
     const curP = t.currentPrice||t.buyPrice||0;
     const value = t.buyPrice ? (t.amount||0)*(curP/t.buyPrice) : t.amount||0;
     const pnl = value - (t.amount||0);
     const pnlPct = t.amount ? (pnl/t.amount*100) : 0;
-    context += `- ${t.name} (${t.type}): ${t.allocation}% target, invested ${port.currency} ${t.amount}, `;
-    context += `buy @ ${t.buyPrice}, current @ ${curP}, P&L: ${pnlPct.toFixed(2)}%`;
-    if (t.sl) context += `, SL: ${t.sl}`;
-    if (t.tp) context += `, TP: ${t.tp}`;
+    context += '- ' + t.name + ' (' + t.type + ')';
+    if (t.sector) context += ' [' + t.sector + ']';
+    if (t.geo) context += ' [' + t.geo + ']';
+    context += ': ' + t.allocation + '% target, invested ' + port.currency + ' ' + t.amount;
+    context += ', buy @ ' + t.buyPrice + ', current @ ' + curP + ', P&L: ' + pnlPct.toFixed(2) + '%';
+    if (t.sl) context += ', SL: ' + t.sl;
+    if (t.tp) context += ', TP: ' + t.tp;
     context += '\n';
     const lastAction = (t.actions||[]).slice(-1)[0];
-    if (lastAction) context += `  Last action (${lastAction.date}): ${lastAction.type} — ${lastAction.rationale||'no rationale'}\n`;
+    if (lastAction) context += '  Last action (' + lastAction.date + '): ' + lastAction.type + ' — ' + (lastAction.rationale||'no rationale') + '\n';
   });
-  context += `\nTotal invested: ${port.currency} ${totalInvested}\n`;
-  context += `Today: ${todayStr()}`;
-  // Add sector/geo breakdown
+  context += '\nTotal invested: ' + port.currency + ' ' + totalInvested + '\nToday: ' + todayStr() + '\n';
   const sectors = {}; const geos = {};
   targets.forEach(t => {
     if (t.sector) sectors[t.sector] = (sectors[t.sector]||0) + (t.amount||0);
     if (t.geo) geos[t.geo] = (geos[t.geo]||0) + (t.amount||0);
   });
-  if (Object.keys(sectors).length) context += `\nSectors: ` + Object.entries(sectors).map(([k,v])=>k+' $'+Math.round(v)).join(', ');
-  if (Object.keys(geos).length) context += `\nGeographies: ` + Object.entries(geos).map(([k,v])=>k+' $'+Math.round(v)).join(', ');
+  if (Object.keys(sectors).length) context += 'Sectors: ' + Object.entries(sectors).map(([k,v])=>k+' $'+Math.round(v)).join(', ') + '\n';
+  if (Object.keys(geos).length) context += 'Geographies: ' + Object.entries(geos).map(([k,v])=>k+' $'+Math.round(v)).join(', ') + '\n';
+
+  // ── Await market context ──
+  if (body) body.innerHTML = '<div class="ai-loading"><div class="ai-loading-dots"><span></span><span></span><span></span></div> Analysing with market intelligence…</div>';
+  const market = await marketPromise;
+  if (market && market.summary) {
+    context += '\nLIVE MARKET CONTEXT (as of today)\n' + market.summary + '\n';
+  }
+
+  const SYSTEM_PROMPT = `You are an elite investment analyst combining the methodologies of the world's greatest investors. You have deep knowledge of:
+
+INVESTMENT FRAMEWORKS YOU APPLY:
+• Warren Buffett: Focus on businesses with durable competitive moats, consistent earnings power, strong management, and purchase only at a significant margin of safety below intrinsic value. Long-term compounding. Avoid businesses you don't understand.
+• Ray Dalio / Bridgewater: All-Weather portfolio thinking — balance risk across asset classes (stocks, bonds, gold, commodities) so the portfolio performs in all economic environments (growth, recession, inflation, deflation). Think in risk parity, not dollar allocation.
+• Howard Marks: Deep focus on risk management first. Understand where we are in the market cycle. Second-level thinking — ask not just "is this good?" but "is this better than what the market expects?" Buy when others are fearful.
+• George Soros / Reflexivity: Markets are shaped by participant perceptions which feed back into fundamentals. Identify when consensus is wrong and position accordingly. Macro awareness is critical.
+• Peter Lynch: Invest in what you know. Growth at a reasonable price (GARP). PEG ratio over pure P/E. Categorise holdings as slow growers, stalwarts, fast growers, cyclicals, turnarounds, or asset plays.
+• Benjamin Graham: Net asset value analysis. Margin of safety. Defensive vs aggressive investor framework. Don't pay for growth you can't verify.
+• Charlie Munger: Mental models from multiple disciplines. Avoid mistakes more than seeking gains. Invert — think about what could go wrong.
+• Top Investment Banks (Goldman Sachs, JPMorgan, BlackRock): Macro factor analysis, sector rotation, rate sensitivity, earnings revision momentum, positioning data.
+
+HOW TO ANALYSE:
+1. First assess the macroeconomic environment from the live market context provided
+2. Apply Dalio's All-Weather lens: is the portfolio positioned for current economic conditions?
+3. Apply Buffett's quality lens: are the holdings high-quality businesses with moats?
+4. Apply Marks's cycle lens: where are we in the cycle? Is this a time to be aggressive or defensive?
+5. Identify concentration risk, correlation risk, currency risk, and liquidity risk
+6. Give specific, actionable recommendations referencing actual holdings and current market conditions
+
+Return ONLY this JSON (no other text):
+{"overview":"...","strengths":"...","risks":"...","recommendations":"...","rebalance":"..."}
+
+Each field: bullet points using • on new lines. Be specific — reference ticker names, percentages, and current market events. Do not pad with generic advice.`;
 
   try {
     const resp = await fetch('/api/claude', {
@@ -1727,17 +1773,8 @@ async function generatePortAI(portId) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         model: 'MiniMax-M2.7',
-        max_tokens: 800,
-        system: `You are an investment portfolio analyst. Analyse the portfolio data and return ONLY a JSON object (no other text):
-{"overview":"...","strengths":"...","risks":"...","recommendations":"...","rebalance":"..."}
-Each field must be bullet points using • separator on new lines.
-- overview: 2-3 bullets on overall portfolio health and positioning
-- strengths: 2-3 bullets on what's working well
-- risks: 2-3 bullets on key risks (concentration, drawdown, stop loss breaches, etc.)
-- recommendations: 3-4 concrete actionable bullets based on the data
-- rebalance: 1-3 specific rebalancing actions if needed (refer to target allocations vs actuals)
-Be specific, data-driven, and reference actual numbers. Do NOT over-summarise or invent data not provided.
-Respond in English.`,
+        max_tokens: 1200,
+        system: SYSTEM_PROMPT,
         messages: [{ role: 'user', content: context }]
       })
     });
@@ -1745,14 +1782,14 @@ Respond in English.`,
     const raw = (data.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('');
     const clean = raw.replace(/```json|```/gi,'').trim();
     const match = clean.match(/\{[\s\S]*\}/);
-    if (!match) throw new Error('no json');
+    if (!match) throw new Error('no json in: ' + clean.slice(0,200));
     const parsed = JSON.parse(match[0]);
     port.aiSummary = parsed;
     saveToStorage();
     if (body) body.innerHTML = renderPortAISummary(parsed);
   } catch(e) {
     console.error('AI analysis error:', e);
-    if (body) body.innerHTML = '<p style="font-size:13px;color:var(--red)">Could not generate analysis — make sure the <code style="background:var(--bg3);padding:1px 5px;border-radius:3px">/api/claude.js</code> proxy is deployed and <code style="background:var(--bg3);padding:1px 5px;border-radius:3px">MINIMAX_API_KEY</code> is set in Vercel environment variables.</p>';
+    if (body) body.innerHTML = '<p style="font-size:13px;color:var(--red)">Could not generate analysis. Check console for details.</p>';
   }
   if (btn) { btn.disabled = false; btn.textContent = '↻ Analyse'; }
 }
