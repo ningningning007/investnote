@@ -1783,7 +1783,13 @@ Each field: bullet points using • on new lines. Be specific — reference tick
     const clean = raw.replace(/```json|```/gi,'').trim();
     const match = clean.match(/\{[\s\S]*\}/);
     if (!match) throw new Error('no json in: ' + clean.slice(0,200));
-    const parsed = JSON.parse(match[0]);
+    // Normalize: collapse newlines inside JSON string values so JSON.parse works
+    let jsonStr = match[0];
+    // Replace literal newlines inside quoted strings with \n escape
+    jsonStr = jsonStr.replace(/"((?:[^"\\]|\\.)*)"/g, (m, inner) =>
+      '"' + inner.replace(/\n/g, '\\n').replace(/\r/g, '') + '"'
+    );
+    const parsed = JSON.parse(jsonStr);
     port.aiSummary = parsed;
     saveToStorage();
     if (body) body.innerHTML = renderPortAISummary(parsed);
