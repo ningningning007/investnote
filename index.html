@@ -1128,11 +1128,12 @@ function renderTargetsTable(port) {
             <td class="mono">${fmtNum(buyP,4)}</td>
             <td>
               <div class="price-cell">
-                <span class="mono">${curP ? fmtNum(curP,4) : '—'}</span>
+                <span class="mono ${!t.priceUpdated && curP === buyP && buyP > 0 ? 'neutral' : ''}">${curP && curP !== buyP || t.priceUpdated ? fmtNum(curP,4) : (buyP ? '<span style="color:var(--text3)">'+fmtNum(buyP,4)+' *</span>' : '—')}</span>
                 ${(t.priceChangePct !== undefined && t.priceChangePct !== 0) ? '<span class="price-change '+pnlClass(priceChange)+'">'+pnlSign(priceChange)+fmtNum(priceChange,2)+'%</span>' : ''}
-                ${(t.sl && curP && curP <= t.sl) ? '<span class="pill pill-red" style="font-size:10px">SL!</span>' : ''}
-                ${(t.tp && curP && curP >= t.tp) ? '<span class="pill pill-green" style="font-size:10px">TP!</span>' : ''}
-                <button class="refresh-btn" onclick="refreshTargetPrice('${port.id}','${t.id}',this)" title="Refresh price">↻</button>
+                ${(t.sl && t.priceUpdated && curP && curP <= t.sl) ? '<span class="pill pill-red" style="font-size:10px">⚠ SL</span>' : ''}
+                ${(t.tp && t.priceUpdated && curP && curP >= t.tp) ? '<span class="pill pill-green" style="font-size:10px">✓ TP</span>' : ''}
+                <button class="refresh-btn" onclick="refreshTargetPrice('${port.id}','${t.id}',this)" title="${t.priceUpdated ? 'Last updated: '+fmtDate(t.priceUpdated) : 'Click to fetch live market price'}">↻</button>
+                ${!t.priceUpdated ? '<span style="font-size:10px;color:var(--text3);white-space:nowrap">get price</span>' : ''}
               </div>
             </td>
             <td class="mono ${pnlClass(pnl)}">${fmtNum(value)}</td>
@@ -1750,7 +1751,8 @@ Respond in English.`,
     saveToStorage();
     if (body) body.innerHTML = renderPortAISummary(parsed);
   } catch(e) {
-    if (body) body.innerHTML = '<p style="font-size:13px;color:var(--red)">Could not generate analysis. Please try again.</p>';
+    console.error('AI analysis error:', e);
+    if (body) body.innerHTML = '<p style="font-size:13px;color:var(--red)">Could not generate analysis — make sure the <code style="background:var(--bg3);padding:1px 5px;border-radius:3px">/api/claude.js</code> proxy is deployed and <code style="background:var(--bg3);padding:1px 5px;border-radius:3px">MINIMAX_API_KEY</code> is set in Vercel environment variables.</p>';
   }
   if (btn) { btn.disabled = false; btn.textContent = '↻ Analyse'; }
 }
